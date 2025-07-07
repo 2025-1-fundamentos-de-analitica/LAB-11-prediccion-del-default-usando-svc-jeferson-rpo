@@ -95,3 +95,140 @@
 # {'type': 'cm_matrix', 'dataset': 'train', 'true_0': {"predicted_0": 15562, "predicte_1": 666}, 'true_1': {"predicted_0": 3333, "predicted_1": 1444}}
 # {'type': 'cm_matrix', 'dataset': 'test', 'true_0': {"predicted_0": 15562, "predicte_1": 650}, 'true_1': {"predicted_0": 2490, "predicted_1": 1420}}
 #
+
+def pregunta11():
+    import pandas as pd
+    import pickle
+    import gzip
+    import os
+    import json
+
+    from sklearn.pipeline import Pipeline
+    from sklearn.compose import ColumnTransformer
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
+    from sklearn.decomposition import PCA
+    from sklearn.feature_selection import SelectKBest, f_classif
+    from sklearn.svm import SVC
+    from sklearn.model_selection import GridSearchCV
+    from sklearn.metrics import (
+        precision_score,
+        recall_score,
+        f1_score,
+        balanced_accuracy_score,
+        confusion_matrix,
+    )
+
+    # Cargar datos
+    with open("files/grading/x_train.pkl", "rb") as f:
+        x_train = pickle.load(f)
+    with open("files/grading/y_train.pkl", "rb") as f:
+        y_train = pickle.load(f)
+    with open("files/grading/x_test.pkl", "rb") as f:
+        x_test = pickle.load(f)
+    with open("files/grading/y_test.pkl", "rb") as f:
+        y_test = pickle.load(f)
+
+    # Columnas
+    categorical = ["SEX", "EDUCATION", "MARRIAGE"]
+    numerical = [col for col in x_train.columns if col not in categorical]
+
+    # Preprocesamiento
+    preprocessor = ColumnTransformer([
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical),
+        ("num", StandardScaler(), numerical),
+    ])
+
+    # Pipeline
+    pipeline = Pipeline([
+        ("pre", preprocessor),
+        ("pca", PCA(n_components=None)),
+        ("select", SelectKBest(score_func=f_classif)),
+        ("clf", SVC(kernel="rbf", class_weight="balanced")),
+    ])
+
+    # Búsqueda de hiperparámetros
+    param_grid = {
+        "select__k": [15, 20, "all"],
+        "clf__C": [0.1, 1, 10],
+        "clf__gamma": ["scale", "auto"]
+    }
+
+    model = GridSearchCV(
+        estimator=pipeline,
+        param_grid=param_grid,
+        scoring="balanced_accuracy",
+        cv=10,
+        n_jobs=-1
+    )
+
+    model.fit(x_train, y_train)
+
+    # Guardar modelo
+    os.makedirs("files/models", exist_ok=True)
+    with gzip.open("files/models/model.pkl.gz", "wb") as f:
+        pickle.dump(model, f)
+
+
+
+    # Función para métricas
+def reparar_metrics_json():
+    import pickle, gzip, json
+    from sklearn.metrics import (
+        precision_score, recall_score, f1_score, balanced_accuracy_score, confusion_matrix
+    )
+    import os
+
+    # Cargar modelo
+    with gzip.open("files/models/model.pkl.gz", "rb") as f:
+        model = pickle.load(f)
+
+    # Cargar datos
+    with open("files/grading/x_train.pkl", "rb") as f:
+        x_train = pickle.load(f)
+    with open("files/grading/y_train.pkl", "rb") as f:
+        y_train = pickle.load(f)
+    with open("files/grading/x_test.pkl", "rb") as f:
+        x_test = pickle.load(f)
+    with open("files/grading/y_test.pkl", "rb") as f:
+        y_test = pickle.load(f)
+
+    def compute_metrics(x, y, name):
+        y_pred = model.predict(x)
+        cm = confusion_matrix(y, y_pred)
+        return [
+            {
+                "type": "metrics",
+                "dataset": name,
+                "precision": precision_score(y, y_pred),
+                "balanced_accuracy": balanced_accuracy_score(y, y_pred),
+                "recall": recall_score(y, y_pred),
+                "f1_score": f1_score(y, y_pred),
+            },
+            {
+                "type": "cm_matrix",
+                "dataset": name,
+                "true_0": {
+                    "predicted_0": int(cm[0][0]),
+                    "predicted_1": int(cm[0][1]),
+                },
+                "true_1": {
+                    "predicted_0": int(cm[1][0]),
+                    "predicted_1": int(cm[1][1]),
+                },
+            },
+        ]
+
+    # Generar resultados en orden correcto
+    train_metrics, train_cm = compute_metrics(x_train, y_train, "train")
+    test_metrics, test_cm = compute_metrics(x_test, y_test, "test")
+
+    resultados = [train_metrics, test_metrics, train_cm, test_cm]
+
+    os.makedirs("files/output", exist_ok=True)
+    with open("files/output/metrics.json", "w", encoding="utf-8") as f:
+        for linea in resultados:
+            json.dump(linea, f)
+            f.write("\n")
+
+if __name__ == "__main__":
+    reparar_metrics_json()
